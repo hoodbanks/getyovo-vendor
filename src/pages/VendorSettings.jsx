@@ -3,16 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LoadScript, StandaloneSearchBox } from "@react-google-maps/api";
 
-
-
-/* ========= CONFIG: where the API lives =========
-   Vendor app will call the users app (same domain or subdomain).
-   In your vendor project's .env file:
-     VITE_API_BASE=https://getyovonow.com
-================================================= */
+/* ========= CONFIG =========
+   In your vendor project's .env:
+   VITE_API_BASE=https://getyovonow.com
+============================ */
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
-/* New constants (used for the vendor card payload) */
+/* Used for vendor card payloads */
 const VENDOR_TYPE = localStorage.getItem("vendorType") || "Shops";
 const VENDOR_NAME_FALLBACK = (localStorage.getItem("vendorEmail") || "vendor").split("@")[0];
 
@@ -25,7 +22,6 @@ const SETTINGS_KEY = `vendor_settings_${VENDOR_ID}`;
 const DEFAULTS = {
   storeName: "",
   logoDataUrl: "",
-
   openingTime: "08:00",
   closingTime: "21:00",
   minOrder: 0,
@@ -52,11 +48,9 @@ function loadSettings() {
     return { ...DEFAULTS };
   }
 }
-
 function saveSettings(data) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
 }
-
 function fmtNaira(n) {
   const num = Number(n || 0);
   return "₦" + num.toLocaleString();
@@ -92,8 +86,6 @@ export default function VendorSettings() {
   );
 
   // VALIDATION:
-  // - name: at least 2 chars
-  // - hours: opening != closing (allows overnight)
   const nameValid = form.storeName.trim().length >= 2;
   const timeValid = Boolean(form.openingTime && form.closingTime && form.openingTime !== form.closingTime);
   const payoutOk =
@@ -113,11 +105,11 @@ export default function VendorSettings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ====== CLOUD: load settings from API on mount ======
+  // Load saved settings from API (optional)
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!API_BASE) return; // skip if not configured
+      if (!API_BASE) return;
       try {
         setCloudBusy(true);
         const res = await fetch(
@@ -130,26 +122,24 @@ export default function VendorSettings() {
           const merged = { ...DEFAULTS, ...s };
           setForm(merged);
           setSavedSnapshot(merged);
-          saveSettings(merged); // keep a local cache
+          saveSettings(merged);
         }
-      } catch (_) {
-        // ignore network/CORS error — local storage remains the source
+      } catch {
+        /* keep local */
       } finally {
         if (alive) setCloudBusy(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, []);
 
-  // ====== CLOUD: save to API (replaced) ======
+  // Save settings to API + upsert vendor card
   async function saveToCloud(settings) {
-    if (!API_BASE) return; // skip if not configured
+    if (!API_BASE) return;
     try {
       setCloudBusy(true);
 
-      // 1) Save detailed settings (so VendorSettings loads next time)
+      // 1) Persist detailed settings
       const settingsPayload = { vendorId: VENDOR_ID, ...settings };
       {
         const res = await fetch(`${API_BASE}/api/vendor-settings`, {
@@ -161,13 +151,12 @@ export default function VendorSettings() {
         if (!res.ok || !data.ok) throw new Error(data.error || `settings HTTP ${res.status}`);
       }
 
-      // 2) Upsert vendor "card" for the Users app list
+      // 2) Upsert vendor card for Users app
       const cardPayload = {
         id: VENDOR_ID,
         name: settings.storeName || VENDOR_NAME_FALLBACK,
-        type: VENDOR_TYPE, // "Restaurant" | "Shops" | "Pharmacy"
+        type: VENDOR_TYPE,
 
-        // send both camelCase and snake_case keys for compatibility with your API
         imageUrl: settings.logoDataUrl || "",
         logo_url: settings.logoDataUrl || "",
 
@@ -242,7 +231,7 @@ export default function VendorSettings() {
     }
   };
 
-  // Use current location (HTTPS required in prod)
+  // Use current location
   const useCurrentLocation = () => {
     if (!("geolocation" in navigator)) {
       alert("Your browser doesn't support location.");
@@ -289,6 +278,17 @@ export default function VendorSettings() {
     );
   };
 
+  // 🚪 LOG OUT (clears vendor auth + routes to /signin)
+  const logoutVendor = () => {
+    if (!confirm("Log out of vendor account?")) return;
+    localStorage.removeItem("vendorId");
+    localStorage.removeItem("vendorEmail");
+    localStorage.removeItem("vendorType");
+    localStorage.setItem("isVendorLoggedIn", "false");
+    localStorage.setItem("isLoggedIn", "false");
+    navigate("/signin", { replace: true });
+  };
+
   // Save/reset
   const handleSave = async () => {
     if (!canSave) {
@@ -305,17 +305,6 @@ export default function VendorSettings() {
   const handleReset = () => setForm(loadSettings());
   const clearAll = () => setForm({ ...DEFAULTS });
 
-  // 🚪 LOG OUT (clears vendor auth + routes to /signin)
-  const logoutVendor = () => {
-    if (!confirm("Log out of vendor account?")) return;
-    localStorage.removeItem("vendorId");
-    localStorage.removeItem("vendorEmail");
-    localStorage.removeItem("vendorType");
-    localStorage.setItem("isVendorLoggedIn", "false"); // if you use this key
-    localStorage.setItem("isLoggedIn", "false");       // fallback if shared
-    navigate("/signin", { replace: true });
-  };
-
   const openNow = isWithinHours(form.openingTime, form.closingTime);
 
   return (
@@ -329,16 +318,25 @@ export default function VendorSettings() {
           {/* Right-side controls */}
           <div className="ml-auto flex items-center gap-2">
             {dirty && (
-              <span className="text-xs bg-white/15 px-2 py-1 rounded">
+              <span className="text-xs px-2 py-1 rounded border border-white/40 bg-white bg-opacity-10">
                 Unsaved changes
               </span>
             )}
             {cloudBusy && (
-              <span className="text-xs bg-white/15 px-2 py-1 rounded">Syncing…</span>
+              <span className="text-xs px-2 py-1 rounded border border-white/40 bg-white bg-opacity-10">
+                Syncing…
+              </span>
             )}
+            {/* Robust visible logout (works on older Tailwind too) */}
             <button
+              type="button"
               onClick={logoutVendor}
-              className="text-sm font-semibold bg-white/15 hover:bg-white/20 px-3 py-2 rounded transition"
+              className="text-sm font-semibold px-3 py-2 rounded transition"
+              style={{
+                color: "#fff",
+                backgroundColor: "rgba(255,255,255,0.2)",
+                border: "1px solid rgba(255,255,255,0.35)"
+              }}
               title="Log out"
             >
               Log out
@@ -480,7 +478,8 @@ export default function VendorSettings() {
                     <button
                       type="button"
                       onClick={useCurrentLocation}
-                      className="px-3 py-2 rounded-lg bg-[#1b5e20] text-white text-sm"
+                      className="px-3 py-2 rounded-lg text-white"
+                      style={{ backgroundColor: "#1b5e20" }}
                       title="Use current location"
                     >
                       📍 Use current
@@ -582,8 +581,9 @@ export default function VendorSettings() {
               onClick={handleSave}
               disabled={!canSave || cloudBusy}
               className={`px-4 py-2 rounded-lg text-white font-semibold ${
-                canSave && !cloudBusy ? "bg-[#1b5e20] hover:bg-[#1b5e20]/90" : "bg-gray-400 cursor-not-allowed"
+                canSave && !cloudBusy ? "" : "bg-gray-400 cursor-not-allowed"
               }`}
+              style={{ backgroundColor: canSave && !cloudBusy ? "#1b5e20" : undefined }}
             >
               {cloudBusy ? "Saving…" : "Save changes"}
             </button>
@@ -670,6 +670,18 @@ export default function VendorSettings() {
           </div>
         </div>
       )}
+
+      {/* EXTRA: a second, very visible logout (safety net) */}
+      <div className="fixed bottom-4 right-4 z-40">
+        <button
+          onClick={logoutVendor}
+          className="px-4 py-2 rounded-lg text-white shadow-lg"
+          style={{ backgroundColor: "#dc2626" }}
+          title="Log out"
+        >
+          Log out
+        </button>
+      </div>
     </main>
   );
 }
