@@ -3,12 +3,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LoadScript, StandaloneSearchBox } from "@react-google-maps/api";
 
+
+
 /* ========= CONFIG: where the API lives =========
    Vendor app will call the users app (same domain or subdomain).
    In your vendor project's .env file:
      VITE_API_BASE=https://getyovonow.com
 ================================================= */
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+
+/* New constants (used for the vendor card payload) */
+const VENDOR_TYPE = localStorage.getItem("vendorType") || "Shops";
+const VENDOR_NAME_FALLBACK = (localStorage.getItem("vendorEmail") || "vendor").split("@")[0];
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyDpTvt828_Ph_6xtI6dNzL6uMagjhFdbUY";
 const LIBRARIES = ["places"];
@@ -137,19 +143,63 @@ export default function VendorSettings() {
     };
   }, []);
 
-  // ====== CLOUD: save to API ======
+  // ====== CLOUD: save to API (replaced) ======
   async function saveToCloud(settings) {
     if (!API_BASE) return; // skip if not configured
     try {
       setCloudBusy(true);
-      const payload = { vendorId: VENDOR_ID, ...settings };
-      const res = await fetch(`${API_BASE}/api/vendor-settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      // 1) Save detailed settings (so VendorSettings loads next time)
+      const settingsPayload = { vendorId: VENDOR_ID, ...settings };
+      {
+        const res = await fetch(`${API_BASE}/api/vendor-settings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(settingsPayload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.error || `settings HTTP ${res.status}`);
+      }
+
+      // 2) Upsert vendor "card" for the Users app list
+      const cardPayload = {
+        id: VENDOR_ID,
+        name: settings.storeName || VENDOR_NAME_FALLBACK,
+        type: VENDOR_TYPE, // "Restaurant" | "Shops" | "Pharmacy"
+
+        // send both camelCase and snake_case keys for compatibility with your API
+        imageUrl: settings.logoDataUrl || "",
+        logo_url: settings.logoDataUrl || "",
+
+        openingTime: settings.openingTime || "",
+        opening_time: settings.openingTime || "",
+
+        closingTime: settings.closingTime || "",
+        closing_time: settings.closingTime || "",
+
+        address: settings.contactAddress || "",
+        contact_address: settings.contactAddress || "",
+
+        lat: settings.locationLat ?? null,
+        location_lat: settings.locationLat ?? null,
+
+        lng: settings.locationLng ?? null,
+        location_lng: settings.locationLng ?? null,
+
+        rating: 4.5,
+        active: true,
+      };
+
+      {
+        const res = await fetch(`${API_BASE}/api/vendors`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cardPayload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.error || `vendors HTTP ${res.status}`);
+      }
+
       setToast("Cloud saved");
       setTimeout(() => setToast(""), 1400);
     } catch (e) {
@@ -255,6 +305,17 @@ export default function VendorSettings() {
   const handleReset = () => setForm(loadSettings());
   const clearAll = () => setForm({ ...DEFAULTS });
 
+  // 🚪 LOG OUT (clears vendor auth + routes to /signin)
+  const logoutVendor = () => {
+    if (!confirm("Log out of vendor account?")) return;
+    localStorage.removeItem("vendorId");
+    localStorage.removeItem("vendorEmail");
+    localStorage.removeItem("vendorType");
+    localStorage.setItem("isVendorLoggedIn", "false"); // if you use this key
+    localStorage.setItem("isLoggedIn", "false");       // fallback if shared
+    navigate("/signin", { replace: true });
+  };
+
   const openNow = isWithinHours(form.openingTime, form.closingTime);
 
   return (
@@ -264,14 +325,25 @@ export default function VendorSettings() {
         <div className="max-w-screen-lg mx-auto px-4 py-4 flex items-center gap-3">
           <button onClick={() => navigate(-1)} className="text-xl">←</button>
           <h1 className="text-2xl font-bold">Store Settings</h1>
-          {dirty && (
-            <span className="ml-auto text-xs bg-white/15 px-2 py-1 rounded">
-              Unsaved changes
-            </span>
-          )}
-          {cloudBusy && (
-            <span className="ml-2 text-xs bg-white/15 px-2 py-1 rounded">Syncing…</span>
-          )}
+
+          {/* Right-side controls */}
+          <div className="ml-auto flex items-center gap-2">
+            {dirty && (
+              <span className="text-xs bg-white/15 px-2 py-1 rounded">
+                Unsaved changes
+              </span>
+            )}
+            {cloudBusy && (
+              <span className="text-xs bg-white/15 px-2 py-1 rounded">Syncing…</span>
+            )}
+            <button
+              onClick={logoutVendor}
+              className="text-sm font-semibold bg-white/15 hover:bg-white/20 px-3 py-2 rounded transition"
+              title="Log out"
+            >
+              Log out
+            </button>
+          </div>
         </div>
       </header>
 
